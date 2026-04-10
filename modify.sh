@@ -54,6 +54,13 @@ for apk_path in "${APK_PATHS[@]}"; do
     echo ">>> 正在反编译..."
     apktool d "$apk_name" -o "${apk_base}_decoded" > /dev/null
     
+    # 修复 native libraries 压缩报错
+    echo ">>> 修复 native libraries 压缩报错"
+    if [ -f "${apk_base}_decoded/AndroidManifest.xml" ]; then
+        sed -i 's/extractNativeLibs="false"/extractNativeLibs="true"/g' "${apk_base}_decoded/AndroidManifest.xml"
+        echo "    [成功] AndroidManifest.xml 强行解压配置注入完成！"
+    fi
+    
     echo ">>> 注入修改代码..."
     
     # ==========================================
@@ -195,7 +202,7 @@ for root, dirs, files in os.walk(base_dir):
         echo "    [成功] ARSC 文本修改与折叠屏 Smali 破解完成！"
 
     # ==========================================
-    # 4. [新增] MIUISystemUIPlugin 手电筒控制替换
+    # 4. MIUISystemUIPlugin 手电筒控制替换
     # ==========================================
     elif [ "$apk_base" == "MIUISystemUIPlugin" ]; then
         echo "--> 替换手电筒相关 Smali 核心文件..."
@@ -237,7 +244,7 @@ for root, dirs, files in os.walk(base_dir):
     echo ">>> 正在回编译..."
     apktool b "${apk_base}_decoded" -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
-    # 🎯 动态追踪混淆资源并强行注入二进制 XML
+    # 🎯 动态追踪混淆资源并强行注入二进制 XML (仅 Settings)
     if [ "$apk_base" == "Settings" ] && [ -f "ad_service_settings.xml" ]; then
         echo ">>> 正在动态追踪混淆资源并注入二进制 XML..."
         mkdir -p tmp_inject/res/xml
