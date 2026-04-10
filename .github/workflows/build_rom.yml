@@ -1,4 +1,4 @@
-name: HyperOS Mod & Auto Release (Aria2 & Custom Tools)
+name: HyperOS Mod & Auto Release (Ultimate)
 
 on:
   workflow_dispatch:
@@ -18,13 +18,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Maximize Disk Space
-        uses: easimon/maximize-build-space@master
+      # 【最关键的改动】换用最强力的推土机清理磁盘空间
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
         with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Setup System Environment
         run: |
@@ -34,27 +38,22 @@ jobs:
           sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
           echo $TZ | sudo tee /etc/timezone
           
-          echo "=== 2. 更新软件源 ==="
+          echo "=== 2. 安装系统依赖 ==="
           sudo apt-get update
-          
-          echo "=== 3. 安装依赖 (开启日志以便排错) ==="
-          # 去掉了 -qq，加入了 --no-install-recommends 减少不必要的关联包
           sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless aria2 p7zip-full
           
-          echo "=== 4. 配置 Apktool ==="
-          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
-          wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
-          chmod +x apktool apktool.jar
-          sudo mv apktool apktool.jar /usr/local/bin/
-
-          echo "=== 5. 赋予自定义 Tools 执行权限 ==="
+          echo "=== 3. 赋予本地 Tools 执行权限并配置 Apktool ==="
           if [ -d "tools" ]; then
             chmod -R +x tools/
-            echo "Tools 权限赋予成功！"
+            # 把你本地传上来的 apktool 移到系统环境变量里
+            sudo cp tools/apktool tools/apktool.jar /usr/local/bin/
+            echo "Tools 权限赋予及 Apktool 配置成功！"
           else
-            echo "警告: 根目录下未找到 tools 文件夹，请确认是否上传！"
+            echo "错误: 未找到 tools 文件夹！请确保已上传 payload_extract, extract.erofs 和 apktool。"
+            exit 1
           fi
 
+      # ---- 下面的步骤不用动，保持你原有的下载和解包逻辑即可 ----
       - name: Download ROM with Aria2
         run: |
           echo "📥 使用 Aria2 多线程下载 ROM..."
