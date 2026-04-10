@@ -27,16 +27,29 @@ jobs:
           remove-codeql: 'true'
 
       - name: Setup System Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive # 强制关闭所有安装弹窗
         run: |
           echo "=== 安装基础依赖 ==="
-          sudo apt-get update
-          sudo apt-get install -y openjdk-17-jre-headless aria2 p7zip-full
+          # 使用 -qq 静默更新，避免日志过多卡死页面
+          sudo -E apt-get update -qq
+          sudo -E apt-get install -yqq openjdk-17-jre-headless aria2 p7zip-full
           
           echo "=== 配置 Apktool ==="
-          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
-          wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
+          # 增加 -q 参数静默下载，防止进度条刷屏导致浏览器卡顿
+          wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
+          wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
           chmod +x apktool apktool.jar
           sudo mv apktool apktool.jar /usr/local/bin/
+
+          echo "=== 赋予自定义 Tools 执行权限 ==="
+          # 增加目录存在性判断，防止因找不到 tools 报错中断
+          if [ -d "tools" ]; then
+            chmod -R +x tools/
+            echo "Tools 权限赋予成功！"
+          else
+            echo "警告: 根目录下未找到 tools 文件夹，请确认是否上传！"
+          fi
 
           echo "=== 赋予自定义 Tools 执行权限 ==="
           # 确保你传到 tools 文件夹里的二进制文件有执行权限
