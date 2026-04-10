@@ -2,11 +2,9 @@
 set -e
 
 echo "=== 0. 修复提取文件夹权限 ==="
-# 赋予最高权限，防止 find 搜索或 apktool 读取时报 Permission denied
 sudo chmod -R 777 system_files product_files system_ext_files 2>/dev/null || true
 
 echo "=== 1. 动态寻找并安装 HyperOS 系统框架 ==="
-# 加入 2>/dev/null 屏蔽无用的搜索警告
 FW_RES=$(find system_files -type f -name "framework-res.apk" 2>/dev/null | head -n 1)
 MIUI_FW=$(find system_files -type f -name "miui-framework-res.apk" 2>/dev/null | head -n 1)
 
@@ -131,16 +129,6 @@ if match:
         fi
         echo "    [成功] 通知图标数量解除限制完成！"
 
-        if [ -f "ad_service_settings.xml" ] && [ -f "device_info_legal.xml" ] && [ -f "fold_screen_settings.xml" ]; then
-            cp -f ad_service_settings.xml "${apk_base}_decoded/res/xml/"
-            cp -f device_info_legal.xml "${apk_base}_decoded/res/xml/"
-            cp -f fold_screen_settings.xml "${apk_base}_decoded/res/xml/"
-            echo "    [成功] 专属 XML 布局文件覆盖完成！"
-        else
-            echo "    [错误] 缺失 XML 配置文件！"
-            exit 1
-        fi
-
         if [ -f "Legal.smali" ]; then
             LEGAL_TARGET=$(find "${apk_base}_decoded/smali"* -path "*/com/android/settings/Legal.smali" 2>/dev/null | head -n 1)
             if [ -n "$LEGAL_TARGET" ]; then
@@ -206,9 +194,26 @@ for root, dirs, files in os.walk(base_dir):
     # ==========================================
 
     echo ">>> 正在回编译..."
-    # 【已修复】删除了报错的 -c 参数，保留 -f (强制覆盖)
     apktool b "${apk_base}_decoded" -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
+    # 🎯 绝妙操作：在回编译完成后，强行注入二进制 XML 到 APK 中！
+    if [ "$apk_base" == "Settings" ] && [ -f "ad_service_settings.xml" ]; then
+        echo ">>> 正在直接注入二进制 XML 布局文件到 APK..."
+        # 创建临时目录构造路径
+        mkdir -p tmp_inject/res/xml
+        cp -f ad_service_settings.xml tmp_inject/res/xml/
+        cp -f device_info_legal.xml tmp_inject/res/xml/
+        cp -f fold_screen_settings.xml tmp_inject/res/xml/
+        
+        # 使用 zip 的 -u (update) 参数，将我们修改好的二进制 XML 直接替换进刚生成的 APK 中
+        cd tmp_inject
+        zip -q -u "../output_apks/${apk_base}_modified.apk" res/xml/*.xml
+        cd ..
+        rm -rf tmp_inject
+        
+        echo "    [成功] 专属 XML 二进制布局文件强行覆盖完成！"
+    fi
+
     echo "✅ $apk_name 处理完成！"
 done
 
