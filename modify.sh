@@ -31,7 +31,7 @@ APK_PATHS=()
 [ -n "$SET_APK" ] && APK_PATHS+=("$SET_APK")
 
 if [ ${#APK_PATHS[@]} -eq 0 ]; then
-    echo "错误: 未找到任何目标 APK，请检查 EROFS 解包步骤是否成功释放了文件！"
+    echo "错误: 未找到任何目标 APK，请检查解包步骤是否成功！"
     exit 1
 fi
 
@@ -43,7 +43,7 @@ for apk_path in "${APK_PATHS[@]}"; do
     apk_base="${apk_name%.*}"
     
     echo "----------------------------------------"
-    echo "正在处理: $apk_name (来源路径: $apk_path)"
+    echo "正在处理: $apk_name (来源: $apk_path)"
     echo "----------------------------------------"
     
     cp -f "$apk_path" "./$apk_name"
@@ -57,10 +57,10 @@ for apk_path in "${APK_PATHS[@]}"; do
     # 1. MSA 去广告逻辑
     # ==========================================
     if [ "$apk_base" == "MSA" ]; then
-        TARGET_FILE=$(grep -rl '"/miad/"' "${apk_base}_decoded/smali" | head -n 1)
+        TARGET_FILE=$(find "${apk_base}_decoded/smali"* -path "*/com/miui/f/g/e.smali" 2>/dev/null | head -n 1)
         if [ -n "$TARGET_FILE" ]; then
             sed -i 's/Ljava\/io\/File;->mkdirs()Z/Ljava\/io\/File;->createNewFile()Z/g' "$TARGET_FILE"
-            echo "    [成功] MSA 代码替换完成！"
+            echo "    [成功] MSA 阻断广告缓存代码替换完成！(精准修改 e.smali)"
         fi
 
     # ==========================================
@@ -71,17 +71,17 @@ for apk_path in "${APK_PATHS[@]}"; do
         if [ -n "$XML_FILE" ]; then
             sed -i '/"reference_battery_health"/a \        <miuix.preference.TextPreference android:title="详细电池健康度" android:key="battery_health" />' "$XML_FILE"
             sed -i '/"reference_toady_charge_time"/a \        <miuix.preference.TextPreference android:title="循环次数" android:key="battery_cycle_value" />\n        <miuix.preference.TextPreference android:title="出厂设计容量" android:key="battery_design_capacity" />\n        <miuix.preference.TextPreference android:title="实际电池容量" android:key="battery_really_capacity" />\n        <miuix.preference.TextPreference android:title="当前电量" android:key="battery_status_now" />\n        <miuix.preference.TextPreference android:title="电池温度" android:key="battery_now_temp" />' "$XML_FILE"
-            echo "    [成功] XML 菜单项注入完成！"
+            echo "    [成功] XML 电池参数菜单项对齐注入完成！"
         fi
 
         SMALI_FILE=$(find "${apk_base}_decoded/smali"* -name "ChargeProtectFragment.smali" | head -n 1)
         if [ -n "$SMALI_FILE" ]; then
             sed -i '/^\.super/a \.field private x:Lmiuix/preference/TextPreference;\n\.field private y:Lmiuix/preference/TextPreference;\n\.field private z:Lmiuix/preference/TextPreference;' "$SMALI_FILE"
-            sed -i '/"reference_toady_charge_time"/a \    invoke-static {p0}, Lcom/miui/powercenter/nightcharge/ChargeProtectFragment;->getAllBatteryInfo(Lcom/miui/powercenter/nightcharge/ChargeProtectFragment;)V' "$SMALI_FILE"
+            sed -i '/const-string.*"reference_cycle_count"/i \    invoke-static {p0}, Lcom/miui/powercenter/nightcharge/ChargeProtectFragment;->getAllBatteryInfo(Lcom/miui/powercenter/nightcharge/ChargeProtectFragment;)V\n' "$SMALI_FILE"
             if [ -f "BatteryMod_all.smali" ]; then
                 echo "" >> "$SMALI_FILE"
                 cat BatteryMod_all.smali >> "$SMALI_FILE"
-                echo "    [成功] Smali 方法追加完成！"
+                echo "    [成功] Smali 方法精准注入至 reference_cycle_count 上方！"
             fi
         fi
 
@@ -119,10 +119,15 @@ method_pattern = r'(\.method private setupShowNotificationIconCount\(\)V.*?\.end
 match = re.search(method_pattern, content, flags=re.DOTALL)
 if match:
     body = match.group(1)
+    
+    # 1. 扩充寄存器
     body = re.sub(r'\.registers \d+', '.registers 9', body)
     
-    # 【核心修复点】防吞噬的高精度正则：只允许 const/4 和 .line 指令存在于两者之间，绝对不吞标签！
-    array_pattern = r'const/4 v0, 0x0(?:[\s]+(?:const/4 v\d, 0x[0-9a-f]|\.line \d+))*[\s]+filled-new-array[^\n]*\[I'
+    # 2. 【核心修复】极其精确地锁定原生的 3、0、1 数组定义块
+    # 使用 \s+ 自动兼容换行和空格，(?:\.line \d+\s+)? 兼容可能存在的 .line 指令
+    array_pattern = r'const/4 v0, 0x3\s+const/4 v1, 0x0\s+const/4 v2, 0x1\s+(?:\.line \d+\s+)?filled-new-array \{[^\}]+\}, \[I'
+    
+    # 3. 替换为全新的 0-7 数组
     new_array = '''const/4 v0, 0x0\n    const/4 v1, 0x1\n    const/4 v2, 0x2\n    const/4 v3, 0x3\n    const/4 v4, 0x4\n    const/4 v5, 0x5\n    const/4 v6, 0x6\n    const/4 v7, 0x7\n    filled-new-array/range {v0 .. v7}, [I'''
     
     body = re.sub(array_pattern, new_array, body)
@@ -138,7 +143,7 @@ if match:
                 cp -f Legal.smali "$LEGAL_TARGET"
                 echo "    [成功] Legal.smali 核心逻辑替换完成！"
             else
-                echo "    [警告] 未在解包目录找到原始 Legal.smali，正在创建新路径注入..."
+                echo "    [警告] 未在解包目录找到原始 Legal.smali，正在创建新路径..."
                 mkdir -p "${apk_base}_decoded/smali/com/android/settings/"
                 cp -f Legal.smali "${apk_base}_decoded/smali/com/android/settings/"
             fi
@@ -199,7 +204,7 @@ for root, dirs, files in os.walk(base_dir):
     echo ">>> 正在回编译..."
     apktool b "${apk_base}_decoded" -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
-    # 🎯 绝妙操作：在回编译完成后，强行注入二进制 XML 到 APK 中！
+    # 🎯 二进制 XML 强行注入
     if [ "$apk_base" == "Settings" ] && [ -f "ad_service_settings.xml" ]; then
         echo ">>> 正在直接注入二进制 XML 布局文件到 APK..."
         mkdir -p tmp_inject/res/xml
