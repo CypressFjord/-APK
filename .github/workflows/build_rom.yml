@@ -55,7 +55,8 @@ jobs:
           # ... 下面的提取和解包逻辑保持不变 ...
           
           echo "🛠️ Dumping partitions..."
-          payload-dumper-go -p system,product,system_ext payload.bin
+          # 【关键修复】加上了 -o extracted 参数，强制输出到该指定文件夹
+          payload-dumper-go -o extracted -p system,product,system_ext payload.bin
           
           echo "📂 Extracting EROFS images..."
           fsck.erofs --extract=system_files extracted/system.img
