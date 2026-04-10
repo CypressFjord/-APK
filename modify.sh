@@ -1,33 +1,55 @@
 #!/bin/bash
 set -e
 
-echo "=== 1. 安装 HyperOS 系统框架 ==="
-apktool if system_files/system/framework/framework-res.apk
-if [ -f "system_files/system/app/miui-framework-res/miui-framework-res.apk" ]; then
-    apktool if system_files/system/app/miui-framework-res/miui-framework-res.apk
+echo "=== 1. 动态寻找并安装 HyperOS 系统框架 ==="
+# 使用 find 命令全盘搜索，无视解包后的目录层级差异
+FW_RES=$(find system_files -type f -name "framework-res.apk" | head -n 1)
+MIUI_FW=$(find system_files -type f -name "miui-framework-res.apk" | head -n 1)
+
+if [ -n "$FW_RES" ]; then
+    echo "    [成功] 找到基础框架: $FW_RES"
+    apktool if "$FW_RES"
+else
+    echo "    [警告] 未找到 framework-res.apk！"
 fi
 
-APK_PATHS=(
-    "product_files/app/MSA/MSA.apk"
-    "product_files/priv-app/MIUISecurityCenter/MIUISecurityCenter.apk"
-    "system_ext_files/priv-app/Settings/Settings.apk"
-)
+if [ -n "$MIUI_FW" ]; then
+    echo "    [成功] 找到 MIUI 框架: $MIUI_FW"
+    apktool if "$MIUI_FW"
+fi
+
+echo "=== 2. 动态定位目标 APK ==="
+# 同样使用 find 动态定位你需要修改的三个 APK
+MSA_APK=$(find product_files -type f -name "MSA.apk" | head -n 1)
+SEC_APK=$(find product_files -type f -name "MIUISecurityCenter.apk" | head -n 1)
+SET_APK=$(find system_ext_files -type f -name "Settings.apk" | head -n 1)
+
+APK_PATHS=()
+[ -n "$MSA_APK" ] && APK_PATHS+=("$MSA_APK")
+[ -n "$SEC_APK" ] && APK_PATHS+=("$SEC_APK")
+[ -n "$SET_APK" ] && APK_PATHS+=("$SET_APK")
+
+if [ ${#APK_PATHS[@]} -eq 0 ]; then
+    echo "错误: 未找到任何目标 APK，请检查 EROFS 解包步骤是否成功释放了文件！"
+    exit 1
+fi
 
 mkdir -p output_apks
 
-echo "=== 2. 开始批量处理 APK ==="
+echo "=== 3. 开始批量处理 APK ==="
 for apk_path in "${APK_PATHS[@]}"; do
     apk_name=$(basename "$apk_path")
     apk_base="${apk_name%.*}"
     
     echo "----------------------------------------"
-    echo "正在处理: $apk_name"
+    echo "正在处理: $apk_name (来源路径: $apk_path)"
     echo "----------------------------------------"
     
-    cp "$apk_path" "./$apk_name"
+    # 复制 APK
+    cp -f "$apk_path" "./$apk_name"
     
     echo ">>> 正在反编译..."
-    apktool d "$apk_name" -o "${apk_base}_decoded"
+    apktool d "$apk_name" -o "${apk_base}_decoded" > /dev/null
     
     echo ">>> 注入修改代码..."
     
@@ -186,7 +208,8 @@ for root, dirs, files in os.walk(base_dir):
     # ==========================================
 
     echo ">>> 正在回编译..."
-    apktool b "${apk_base}_decoded" -c -o "output_apks/${apk_base}_modified.apk"
+    # 加上 -f 参数，强制覆盖已存在的目录
+    apktool b "${apk_base}_decoded" -c -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
     echo "✅ $apk_name 处理完成！"
 done
