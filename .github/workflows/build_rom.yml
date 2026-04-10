@@ -1,0 +1,86 @@
+name: HyperOS Mod & Auto Release (Ultimate)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: 'HyperOS ROM 下载链接 (卡刷包 .zip)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Maximize Disk Space
+        uses: easimon/maximize-build-space@master
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Setup Tools (erofs, apktool, payload-dumper)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y erofs-utils openjdk-17-jre-headless
+          
+          wget https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
+          tar -zxvf payload-dumper-go_1.2.2_linux_amd64.tar.gz
+          sudo mv payload-dumper-go /usr/local/bin/
+          
+          wget https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O apktool.jar
+          wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
+          chmod +x apktool apktool.jar
+          sudo mv apktool apktool.jar /usr/local/bin/
+
+      - name: Download and Extract ROM
+        run: |
+          echo "📥 Downloading ROM..."
+          wget "${{ github.event.inputs.rom_url }}" -O rom.zip
+          
+          echo "📦 Unzipping payload.bin..."
+          unzip rom.zip payload.bin
+          
+          echo "🛠️ Dumping partitions..."
+          payload-dumper-go -p system,product,system_ext payload.bin
+          
+          echo "📂 Extracting EROFS images..."
+          fsck.erofs --extract=system_files extracted/system.img
+          fsck.erofs --extract=product_files extracted/product.img
+          fsck.erofs --extract=system_ext_files extracted/system_ext.img
+
+      - name: Run Modification Script
+        run: |
+          chmod +x modify.sh
+          ./modify.sh
+
+      - name: Generate Release Tag
+        id: tag
+        run: echo "release_tag=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "CypressFjord® HyperOS Mod - ${{ steps.tag.outputs.release_tag }}"
+          body: |
+            ### 自动化特调模块完成 🚀
+            **源 ROM**: ${{ github.event.inputs.rom_url }}
+            
+            **包含特性**:
+            - 🛡️ **MSA 去广告**: 阻断系统级广告缓存
+            - 🔋 **手机管家增强**: 解锁详细电池健康度、循环次数、温度及真实容量
+            - ⚙️ **设置中心特调**: 解除状态栏通知图标 3 个限制 (最高 7 个)
+            - 📱 **专属关于本机**: CypressFjord® 专属系统信息控制面板
+            
+            *(建议配合核心破解或 LSPosed 模块食用)*
+          files: output_apks/*.apk
+          draft: false
+          prerelease: false
