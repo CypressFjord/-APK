@@ -120,9 +120,12 @@ match = re.search(method_pattern, content, flags=re.DOTALL)
 if match:
     body = match.group(1)
     body = re.sub(r'\.registers \d+', '.registers 9', body)
-    array_pattern = r'const/4 v0, 0x0.*?filled-new-array.*?\[I'
+    
+    # 【核心修复点】防吞噬的高精度正则：只允许 const/4 和 .line 指令存在于两者之间，绝对不吞标签！
+    array_pattern = r'const/4 v0, 0x0(?:[\s]+(?:const/4 v\d, 0x[0-9a-f]|\.line \d+))*[\s]+filled-new-array[^\n]*\[I'
     new_array = '''const/4 v0, 0x0\n    const/4 v1, 0x1\n    const/4 v2, 0x2\n    const/4 v3, 0x3\n    const/4 v4, 0x4\n    const/4 v5, 0x5\n    const/4 v6, 0x6\n    const/4 v7, 0x7\n    filled-new-array/range {v0 .. v7}, [I'''
-    body = re.sub(array_pattern, new_array, body, flags=re.DOTALL)
+    
+    body = re.sub(array_pattern, new_array, body)
     content = content[:match.start()] + body + content[match.end():]
     with open(file, 'w', encoding='utf-8') as f: f.write(content)
 " "$NOTIFY_SMALI"
@@ -199,13 +202,11 @@ for root, dirs, files in os.walk(base_dir):
     # 🎯 绝妙操作：在回编译完成后，强行注入二进制 XML 到 APK 中！
     if [ "$apk_base" == "Settings" ] && [ -f "ad_service_settings.xml" ]; then
         echo ">>> 正在直接注入二进制 XML 布局文件到 APK..."
-        # 创建临时目录构造路径
         mkdir -p tmp_inject/res/xml
         cp -f ad_service_settings.xml tmp_inject/res/xml/
         cp -f device_info_legal.xml tmp_inject/res/xml/
         cp -f fold_screen_settings.xml tmp_inject/res/xml/
         
-        # 使用 zip 的 -u (update) 参数，将我们修改好的二进制 XML 直接替换进刚生成的 APK 中
         cd tmp_inject
         zip -q -u "../output_apks/${apk_base}_modified.apk" res/xml/*.xml
         cd ..
