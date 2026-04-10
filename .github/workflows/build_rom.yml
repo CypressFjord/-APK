@@ -1,4 +1,4 @@
-name: HyperOS Mod & Auto Release (Ultimate)
+name: HyperOS Mod & Auto Release (Aria2 & Custom Tools)
 
 on:
   workflow_dispatch:
@@ -26,45 +26,66 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - name: Setup Tools (erofs, apktool, payload-dumper, aria2)
+      - name: Setup System Environment
         run: |
+          echo "=== 安装基础依赖 ==="
           sudo apt-get update
-          sudo apt-get install -y erofs-utils openjdk-17-jre-headless aria2
-          # ... 下面的 apktool 等工具安装保持不变 ...
+          sudo apt-get install -y openjdk-17-jre-headless aria2 p7zip-full
           
-          # 部署 payload-dumper-go
-          wget https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
-          tar -zxvf payload-dumper-go_1.2.2_linux_amd64.tar.gz
-          sudo mv payload-dumper-go /usr/local/bin/
-          
-          # 部署 Apktool (已修复 404 错误)
-          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar -O apktool.jar
+          echo "=== 配置 Apktool ==="
+          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
           wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
           chmod +x apktool apktool.jar
           sudo mv apktool apktool.jar /usr/local/bin/
 
-      - name: Download and Extract ROM
+          echo "=== 赋予自定义 Tools 执行权限 ==="
+          # 确保你传到 tools 文件夹里的二进制文件有执行权限
+          chmod -R +x tools/
+
+      - name: Download ROM with Aria2
         run: |
-          echo "📥 Downloading ROM with Aria2 (16 Threads)..."
-          # -x 16 表示 16 线程，-s 16 表示 16 个连接数
-          aria2c -x 16 -s 16 "${{ github.event.inputs.rom_url }}" -o rom.zip
+          echo "📥 使用 Aria2 多线程下载 ROM..."
+          # 强制将下载的文件命名为 rom.zip，避免链接中的杂乱字符导致找不到文件
+          aria2c -x16 -s16 -j$(nproc) -U "Mozilla/5.0" -d . "${{ github.event.inputs.rom_url }}" -o rom.zip
+
+      - name: Extract Payload.bin
+        run: |
+          echo "📦 使用 7z 提取 payload.bin..."
+          7z e rom.zip payload.bin > /dev/null
+          rm rom.zip # 提取完立刻删除 zip 腾出空间
           
-          echo "📦 Unzipping payload.bin..."
-          unzip rom.zip payload.bin
+          echo "🛠️ 使用自定义 payload_extract 分解分区..."
+          mkdir -p extracted_images
+          # 提取需要的三个分区
+          ./tools/payload_extract -s -o extracted_images -i payload.bin -X system,product,system_ext -T0
+          rm payload.bin # 删除 payload.bin 腾出空间
+
+      - name: Extract EROFS Images
+        run: |
+          echo "📂 使用自定义 extract.erofs 解包镜像..."
+          mkdir -p system_files product_files system_ext_files
           
-          # ... 下面的提取和解包逻辑保持不变 ...
+          echo "-> 解包 system..."
+          cd system_files
+          sudo ../tools/extract.erofs -i ../extracted_images/system.img -x -s
+          cd ..
           
-          echo "🛠️ Dumping partitions..."
-          # 【关键修复】加上了 -o extracted 参数，强制输出到该指定文件夹
-          payload-dumper-go -o extracted -p system,product,system_ext payload.bin
+          echo "-> 解包 product..."
+          cd product_files
+          sudo ../tools/extract.erofs -i ../extracted_images/product.img -x -s
+          cd ..
           
-          echo "📂 Extracting EROFS images..."
-          fsck.erofs --extract=system_files extracted/system.img
-          fsck.erofs --extract=product_files extracted/product.img
-          fsck.erofs --extract=system_ext_files extracted/system_ext.img
+          echo "-> 解包 system_ext..."
+          cd system_ext_files
+          sudo ../tools/extract.erofs -i ../extracted_images/system_ext.img -x -s
+          cd ..
+          
+          # 解包完清理 img 文件
+          sudo rm -rf extracted_images
 
       - name: Run Modification Script
         run: |
+          echo "🚀 执行 APK 深度特调修改脚本..."
           chmod +x modify.sh
           ./modify.sh
 
@@ -72,22 +93,21 @@ jobs:
         id: tag
         run: echo "release_tag=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
-      - name: Upload to GitHub Releases
+      - name: Upload Modded APKs to Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: "CypressFjord® HyperOS Mod - ${{ steps.tag.outputs.release_tag }}"
+          name: "HyperOS 特调 APKs - ${{ steps.tag.outputs.release_tag }}"
           body: |
-            ### 自动化特调模块完成 🚀
+            ### 自动化特调完成 🚀
             **源 ROM**: ${{ github.event.inputs.rom_url }}
             
-            **包含特性**:
-            - 🛡️ **MSA 去广告**: 阻断系统级广告缓存
-            - 🔋 **手机管家增强**: 解锁详细电池健康度、循环次数、温度及真实容量
-            - ⚙️ **设置中心特调**: 解除状态栏通知图标 3 个限制 (最高 7 个)
-            - 📱 **专属关于本机**: CypressFjord® 专属系统信息控制面板
+            **包含文件**:
+            - 🛡️ `MSA_modified.apk` (去广告缓存)
+            - 🔋 `MIUISecurityCenter_modified.apk` (解锁详细电池健康度面板)
+            - ⚙️ `Settings_modified.apk` (专属关于机型页面 + 7 个状态栏通知图标)
             
-            *(建议配合核心破解或 LSPosed 模块食用)*
+            *(提取自 Aria2 + 自定义 Tool 高速构建流)*
           files: output_apks/*.apk
           draft: false
           prerelease: false
