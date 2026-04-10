@@ -1,4 +1,4 @@
-name: HyperOS Mod & Auto Release (Ultimate)
+name: 🚀 HyperOS Mod & Auto Release (Ultimate)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 【最关键的改动】换用最强力的推土机清理磁盘空间
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
         with:
@@ -30,7 +29,7 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Setup System Environment
+      - name: Setup Environment
         run: |
           echo "=== 1. 强行设置时区防卡死 ==="
           export DEBIAN_FRONTEND=noninteractive
@@ -39,60 +38,45 @@ jobs:
           echo $TZ | sudo tee /etc/timezone
           
           echo "=== 2. 安装系统依赖 ==="
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless aria2 p7zip-full
+          sudo apt-get update -qq
+          sudo apt-get install -yqq openjdk-17-jre-headless aria2 p7zip-full zip
           
-          echo "=== 3. 赋予本地 Tools 执行权限并配置 Apktool ==="
+          echo "=== 3. 检查并配置本地 Tools ==="
           if [ -d "tools" ]; then
             chmod -R +x tools/
-            # 把你本地传上来的 apktool 移到系统环境变量里
-            sudo cp tools/apktool tools/apktool.jar /usr/local/bin/
-            echo "Tools 权限赋予及 Apktool 配置成功！"
+            # 将你本地上传的 apktool 放入系统路径
+            sudo cp tools/apktool tools/apktool.jar /usr/local/bin/ 2>/dev/null || true
+            echo "✅ Tools 权限赋予及 Apktool 配置成功！"
           else
-            echo "错误: 未找到 tools 文件夹！请确保已上传 payload_extract, extract.erofs 和 apktool。"
+            echo "❌ 严重错误: 未找到 tools 文件夹！请确认已上传 payload_extract, extract.erofs 和 apktool。"
             exit 1
           fi
 
-      # ---- 下面的步骤不用动，保持你原有的下载和解包逻辑即可 ----
       - name: Download ROM with Aria2
         run: |
           echo "📥 使用 Aria2 多线程下载 ROM..."
-          # 强制将下载的文件命名为 rom.zip，避免链接中的杂乱字符导致找不到文件
           aria2c -x16 -s16 -j$(nproc) -U "Mozilla/5.0" -d . "${{ github.event.inputs.rom_url }}" -o rom.zip
 
       - name: Extract Payload.bin
         run: |
           echo "📦 使用 7z 提取 payload.bin..."
           7z e rom.zip payload.bin > /dev/null
-          rm rom.zip # 提取完立刻删除 zip 腾出空间
+          rm rom.zip
           
-          echo "🛠️ 使用自定义 payload_extract 分解分区..."
+          echo "🛠️ 提取 System, Product, System_Ext..."
           mkdir -p extracted_images
-          # 提取需要的三个分区
           ./tools/payload_extract -s -o extracted_images -i payload.bin -X system,product,system_ext -T0
-          rm payload.bin # 删除 payload.bin 腾出空间
+          rm payload.bin
 
       - name: Extract EROFS Images
         run: |
-          echo "📂 使用自定义 extract.erofs 解包镜像..."
+          echo "📂 解包 EROFS 镜像..."
           mkdir -p system_files product_files system_ext_files
           
-          echo "-> 解包 system..."
-          cd system_files
-          sudo ../tools/extract.erofs -i ../extracted_images/system.img -x -s
-          cd ..
+          cd system_files && sudo ../tools/extract.erofs -i ../extracted_images/system.img -x -s && cd ..
+          cd product_files && sudo ../tools/extract.erofs -i ../extracted_images/product.img -x -s && cd ..
+          cd system_ext_files && sudo ../tools/extract.erofs -i ../extracted_images/system_ext.img -x -s && cd ..
           
-          echo "-> 解包 product..."
-          cd product_files
-          sudo ../tools/extract.erofs -i ../extracted_images/product.img -x -s
-          cd ..
-          
-          echo "-> 解包 system_ext..."
-          cd system_ext_files
-          sudo ../tools/extract.erofs -i ../extracted_images/system_ext.img -x -s
-          cd ..
-          
-          # 解包完清理 img 文件
           sudo rm -rf extracted_images
 
       - name: Run Modification Script
@@ -108,18 +92,19 @@ jobs:
       - name: Upload Modded APKs to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: "HyperOS 特调 APKs - ${{ steps.tag.outputs.release_tag }}"
+          tag_name: Modded-APKs-${{ steps.tag.outputs.release_tag }}
+          name: "🔥 HyperOS 深度特调 APKs - ${{ steps.tag.outputs.release_tag }}"
           body: |
             ### 自动化特调完成 🚀
             **源 ROM**: ${{ github.event.inputs.rom_url }}
             
-            **包含文件**:
-            - 🛡️ `MSA_modified.apk` (去广告缓存)
-            - 🔋 `MIUISecurityCenter_modified.apk` (解锁详细电池健康度面板)
-            - ⚙️ `Settings_modified.apk` (专属关于机型页面 + 7 个状态栏通知图标)
+            **本次深度注入内容**:
+            - 🛡️ `MSA_modified.apk` (完全阻断广告缓存目录创建)
+            - 🔋 `MIUISecurityCenter_modified.apk` (解锁完美对齐版详细电池健康度面板)
+            - ⚙️ `Settings_modified.apk` (突破 7 个通知图标限制 + 专属关于机型与折叠屏伪装)
+            - 🔦 `MIUISystemUIPlugin_modified.apk` (手电筒底层逻辑与 UI 接收器深度替换)
             
-            *(提取自 Aria2 + 自定义 Tool 高速构建流)*
+            *(构建自 GitHub Actions 自动化流水线)*
           files: output_apks/*.apk
           draft: false
           prerelease: false
