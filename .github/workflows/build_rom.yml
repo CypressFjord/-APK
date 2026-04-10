@@ -27,20 +27,27 @@ jobs:
           remove-codeql: 'true'
 
       - name: Setup System Environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          echo "=== 安装基础依赖 ==="
-          sudo -E apt-get update -qq
-          sudo -E apt-get install -yqq openjdk-17-jre-headless aria2 p7zip-full
+          echo "=== 1. 强行设置时区防卡死 ==="
+          export DEBIAN_FRONTEND=noninteractive
+          export TZ=Asia/Shanghai
+          sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
+          echo $TZ | sudo tee /etc/timezone
           
-          echo "=== 配置 Apktool ==="
-          wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
-          wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
+          echo "=== 2. 更新软件源 ==="
+          sudo apt-get update
+          
+          echo "=== 3. 安装依赖 (开启日志以便排错) ==="
+          # 去掉了 -qq，加入了 --no-install-recommends 减少不必要的关联包
+          sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless aria2 p7zip-full
+          
+          echo "=== 4. 配置 Apktool ==="
+          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
+          wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O apktool
           chmod +x apktool apktool.jar
           sudo mv apktool apktool.jar /usr/local/bin/
 
-          echo "=== 赋予自定义 Tools 执行权限 ==="
+          echo "=== 5. 赋予自定义 Tools 执行权限 ==="
           if [ -d "tools" ]; then
             chmod -R +x tools/
             echo "Tools 权限赋予成功！"
