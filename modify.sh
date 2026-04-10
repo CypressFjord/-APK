@@ -5,8 +5,8 @@ echo "=== 0. 修复提取文件夹权限 ==="
 sudo chmod -R 777 system_files product_files system_ext_files 2>/dev/null || true
 
 echo "=== 1. 动态寻找并安装 HyperOS 系统框架 ==="
-FW_RES=$(find system_files -type f -name "framework-res.apk" 2>/dev/null | head -n 1)
-MIUI_FW=$(find system_files -type f -name "miui-framework-res.apk" 2>/dev/null | head -n 1)
+FW_RES=$(find system_files product_files system_ext_files -type f -name "framework-res.apk" 2>/dev/null | head -n 1)
+MIUI_FW=$(find system_files product_files system_ext_files -type f -name "miui-framework-res.apk" 2>/dev/null | head -n 1)
 
 if [ -n "$FW_RES" ]; then
     echo "    [成功] 找到基础框架: $FW_RES"
@@ -21,14 +21,17 @@ if [ -n "$MIUI_FW" ]; then
 fi
 
 echo "=== 2. 动态定位目标 APK ==="
-MSA_APK=$(find product_files -type f -name "MSA.apk" 2>/dev/null | head -n 1)
-SEC_APK=$(find product_files -type f -name "MIUISecurityCenter.apk" 2>/dev/null | head -n 1)
-SET_APK=$(find system_ext_files -type f -name "Settings.apk" 2>/dev/null | head -n 1)
+# 全局动态搜索你需要的四个 APK
+MSA_APK=$(find product_files system_files system_ext_files -type f -name "MSA.apk" 2>/dev/null | head -n 1)
+SEC_APK=$(find product_files system_files system_ext_files -type f -name "MIUISecurityCenter.apk" 2>/dev/null | head -n 1)
+SET_APK=$(find product_files system_files system_ext_files -type f -name "Settings.apk" 2>/dev/null | head -n 1)
+PLUGIN_APK=$(find product_files system_files system_ext_files -type f -name "MIUISystemUIPlugin.apk" 2>/dev/null | head -n 1)
 
 APK_PATHS=()
 [ -n "$MSA_APK" ] && APK_PATHS+=("$MSA_APK")
 [ -n "$SEC_APK" ] && APK_PATHS+=("$SEC_APK")
 [ -n "$SET_APK" ] && APK_PATHS+=("$SET_APK")
+[ -n "$PLUGIN_APK" ] && APK_PATHS+=("$PLUGIN_APK")
 
 if [ ${#APK_PATHS[@]} -eq 0 ]; then
     echo "错误: 未找到任何目标 APK，请检查解包步骤是否成功！"
@@ -54,7 +57,7 @@ for apk_path in "${APK_PATHS[@]}"; do
     echo ">>> 注入修改代码..."
     
     # ==========================================
-    # 1. MSA 去广告逻辑
+    # 1. MSA 去广告逻辑 (精准定位)
     # ==========================================
     if [ "$apk_base" == "MSA" ]; then
         TARGET_FILE=$(find "${apk_base}_decoded/smali"* -path "*/com/miui/f/g/e.smali" 2>/dev/null | head -n 1)
@@ -119,17 +122,9 @@ method_pattern = r'(\.method private setupShowNotificationIconCount\(\)V.*?\.end
 match = re.search(method_pattern, content, flags=re.DOTALL)
 if match:
     body = match.group(1)
-    
-    # 1. 扩充寄存器
     body = re.sub(r'\.registers \d+', '.registers 9', body)
-    
-    # 2. 【核心修复】极其精确地锁定原生的 3、0、1 数组定义块
-    # 使用 \s+ 自动兼容换行和空格，(?:\.line \d+\s+)? 兼容可能存在的 .line 指令
     array_pattern = r'const/4 v0, 0x3\s+const/4 v1, 0x0\s+const/4 v2, 0x1\s+(?:\.line \d+\s+)?filled-new-array \{[^\}]+\}, \[I'
-    
-    # 3. 替换为全新的 0-7 数组
     new_array = '''const/4 v0, 0x0\n    const/4 v1, 0x1\n    const/4 v2, 0x2\n    const/4 v3, 0x3\n    const/4 v4, 0x4\n    const/4 v5, 0x5\n    const/4 v6, 0x6\n    const/4 v7, 0x7\n    filled-new-array/range {v0 .. v7}, [I'''
-    
     body = re.sub(array_pattern, new_array, body)
     content = content[:match.start()] + body + content[match.end():]
     with open(file, 'w', encoding='utf-8') as f: f.write(content)
@@ -198,26 +193,85 @@ for root, dirs, files in os.walk(base_dir):
                     with open(filepath, 'w', encoding='utf-8') as f: f.write(content)
 " "${apk_base}_decoded"
         echo "    [成功] ARSC 文本修改与折叠屏 Smali 破解完成！"
+
+    # ==========================================
+    # 4. [新增] MIUISystemUIPlugin 手电筒控制替换
+    # ==========================================
+    elif [ "$apk_base" == "MIUISystemUIPlugin" ]; then
+        echo "--> 替换手电筒相关 Smali 核心文件..."
+        
+        # 1. 替换 MiFlashlightManager.smali
+        if [ -f "MiFlashlightManager.smali" ]; then
+            MANAGER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightManager.smali" 2>/dev/null | head -n 1)
+            if [ -n "$MANAGER_SMALI" ]; then
+                cp -f MiFlashlightManager.smali "$MANAGER_SMALI"
+                echo "    [成功] 完美覆盖 MiFlashlightManager.smali！"
+            else
+                echo "    [警告] 未在解包目录找到原有 Manager，强制注入新路径..."
+                mkdir -p "${apk_base}_decoded/smali/miui/systemui/flashlight/"
+                cp -f MiFlashlightManager.smali "${apk_base}_decoded/smali/miui/systemui/flashlight/"
+            fi
+        else
+            echo "    [错误] 缺失 MiFlashlightManager.smali 文件！"
+            exit 1
+        fi
+
+        # 2. 替换 MiFlashlightOnSystemUiReceiver.smali
+        if [ -f "MiFlashlightOnSystemUiReceiver.smali" ]; then
+            RECEIVER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightOnSystemUiReceiver.smali" 2>/dev/null | head -n 1)
+            if [ -n "$RECEIVER_SMALI" ]; then
+                cp -f MiFlashlightOnSystemUiReceiver.smali "$RECEIVER_SMALI"
+                echo "    [成功] 完美覆盖 MiFlashlightOnSystemUiReceiver.smali！"
+            else
+                echo "    [警告] 未在解包目录找到原有 Receiver，强制注入新路径..."
+                mkdir -p "${apk_base}_decoded/smali/miui/systemui/flashlight/"
+                cp -f MiFlashlightOnSystemUiReceiver.smali "${apk_base}_decoded/smali/miui/systemui/flashlight/"
+            fi
+        else
+            echo "    [错误] 缺失 MiFlashlightOnSystemUiReceiver.smali 文件！"
+            exit 1
+        fi
     fi
     # ==========================================
 
     echo ">>> 正在回编译..."
     apktool b "${apk_base}_decoded" -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
-    # 🎯 二进制 XML 强行注入
+    # 🎯 动态追踪混淆资源并强行注入二进制 XML
     if [ "$apk_base" == "Settings" ] && [ -f "ad_service_settings.xml" ]; then
-        echo ">>> 正在直接注入二进制 XML 布局文件到 APK..."
+        echo ">>> 正在动态追踪混淆资源并注入二进制 XML..."
         mkdir -p tmp_inject/res/xml
-        cp -f ad_service_settings.xml tmp_inject/res/xml/
-        cp -f device_info_legal.xml tmp_inject/res/xml/
-        cp -f fold_screen_settings.xml tmp_inject/res/xml/
+        
+        OBFUSCATED_AD=$(grep -rl "ad_service" "${apk_base}_decoded/res/xml" | head -n 1)
+        if [ -n "$OBFUSCATED_AD" ]; then
+            AD_NAME=$(basename "$OBFUSCATED_AD")
+            cp -f ad_service_settings.xml "tmp_inject/res/xml/$AD_NAME"
+            echo "    [追踪成功] 广告服务界面被混淆为: $AD_NAME"
+        fi
+
+        OBFUSCATED_LEGAL=$(grep -rl "device_info_legal" "${apk_base}_decoded/res/xml" | head -n 1)
+        if [ -n "$OBFUSCATED_LEGAL" ]; then
+            LEGAL_NAME=$(basename "$OBFUSCATED_LEGAL")
+            cp -f device_info_legal.xml "tmp_inject/res/xml/$LEGAL_NAME"
+            echo "    [追踪成功] 法律信息界面被混淆为: $LEGAL_NAME"
+        fi
+
+        OBFUSCATED_FOLD=$(grep -rl "fold_screen" "${apk_base}_decoded/res/xml" | head -n 1)
+        if [ -n "$OBFUSCATED_FOLD" ]; then
+            FOLD_NAME=$(basename "$OBFUSCATED_FOLD")
+            cp -f fold_screen_settings.xml "tmp_inject/res/xml/$FOLD_NAME"
+            echo "    [追踪成功] 折叠屏界面被混淆为: $FOLD_NAME"
+        fi
         
         cd tmp_inject
-        zip -q -u "../output_apks/${apk_base}_modified.apk" res/xml/*.xml
+        if [ "$(ls -A res/xml/ 2>/dev/null)" ]; then
+            zip -q -u "../output_apks/${apk_base}_modified.apk" res/xml/*.xml
+            echo "    [完美] 专属 XML 已成功伪装并强行覆盖原混淆文件！"
+        else
+            echo "    [警告] 未能匹配到任何混淆文件，注入跳过！"
+        fi
         cd ..
         rm -rf tmp_inject
-        
-        echo "    [成功] 专属 XML 二进制布局文件强行覆盖完成！"
     fi
 
     echo "✅ $apk_name 处理完成！"
