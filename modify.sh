@@ -1,10 +1,14 @@
 #!/bin/bash
 set -e
 
+echo "=== 0. 修复提取文件夹权限 ==="
+# 赋予最高权限，防止 find 搜索或 apktool 读取时报 Permission denied
+sudo chmod -R 777 system_files product_files system_ext_files 2>/dev/null || true
+
 echo "=== 1. 动态寻找并安装 HyperOS 系统框架 ==="
-# 使用 find 命令全盘搜索，无视解包后的目录层级差异
-FW_RES=$(find system_files -type f -name "framework-res.apk" | head -n 1)
-MIUI_FW=$(find system_files -type f -name "miui-framework-res.apk" | head -n 1)
+# 加入 2>/dev/null 屏蔽无用的搜索警告
+FW_RES=$(find system_files -type f -name "framework-res.apk" 2>/dev/null | head -n 1)
+MIUI_FW=$(find system_files -type f -name "miui-framework-res.apk" 2>/dev/null | head -n 1)
 
 if [ -n "$FW_RES" ]; then
     echo "    [成功] 找到基础框架: $FW_RES"
@@ -19,10 +23,9 @@ if [ -n "$MIUI_FW" ]; then
 fi
 
 echo "=== 2. 动态定位目标 APK ==="
-# 同样使用 find 动态定位你需要修改的三个 APK
-MSA_APK=$(find product_files -type f -name "MSA.apk" | head -n 1)
-SEC_APK=$(find product_files -type f -name "MIUISecurityCenter.apk" | head -n 1)
-SET_APK=$(find system_ext_files -type f -name "Settings.apk" | head -n 1)
+MSA_APK=$(find product_files -type f -name "MSA.apk" 2>/dev/null | head -n 1)
+SEC_APK=$(find product_files -type f -name "MIUISecurityCenter.apk" 2>/dev/null | head -n 1)
+SET_APK=$(find system_ext_files -type f -name "Settings.apk" 2>/dev/null | head -n 1)
 
 APK_PATHS=()
 [ -n "$MSA_APK" ] && APK_PATHS+=("$MSA_APK")
@@ -45,7 +48,6 @@ for apk_path in "${APK_PATHS[@]}"; do
     echo "正在处理: $apk_name (来源路径: $apk_path)"
     echo "----------------------------------------"
     
-    # 复制 APK
     cp -f "$apk_path" "./$apk_name"
     
     echo ">>> 正在反编译..."
@@ -91,7 +93,6 @@ for apk_path in "${APK_PATHS[@]}"; do
     elif [ "$apk_base" == "Settings" ]; then
         echo "--> 应用 Settings 综合修改..."
         
-        # --- A. 修改 通知图标数量突破限制 ---
         XML_FILES=$(grep -rl '"notification_icon_counts_entries"' "${apk_base}_decoded/res/" || true)
         if [ -n "$XML_FILES" ]; then
             for file in $XML_FILES; do
@@ -130,7 +131,6 @@ if match:
         fi
         echo "    [成功] 通知图标数量解除限制完成！"
 
-        # --- B. 注入 3 个专属 XML 布局文件 ---
         if [ -f "ad_service_settings.xml" ] && [ -f "device_info_legal.xml" ] && [ -f "fold_screen_settings.xml" ]; then
             cp -f ad_service_settings.xml "${apk_base}_decoded/res/xml/"
             cp -f device_info_legal.xml "${apk_base}_decoded/res/xml/"
@@ -141,9 +141,8 @@ if match:
             exit 1
         fi
 
-        # --- C. 替换 Legal.smali 文件 ---
         if [ -f "Legal.smali" ]; then
-            LEGAL_TARGET=$(find "${apk_base}_decoded/smali"* -path "*/com/android/settings/Legal.smali" | head -n 1)
+            LEGAL_TARGET=$(find "${apk_base}_decoded/smali"* -path "*/com/android/settings/Legal.smali" 2>/dev/null | head -n 1)
             if [ -n "$LEGAL_TARGET" ]; then
                 cp -f Legal.smali "$LEGAL_TARGET"
                 echo "    [成功] Legal.smali 核心逻辑替换完成！"
@@ -157,7 +156,6 @@ if match:
             exit 1
         fi
 
-        # --- D. Python 全局修改 ARSC 文本与 Smali 控制逻辑 ---
 python3 -c "
 import os, re, sys
 base_dir = sys.argv[1]
@@ -208,8 +206,8 @@ for root, dirs, files in os.walk(base_dir):
     # ==========================================
 
     echo ">>> 正在回编译..."
-    # 加上 -f 参数，强制覆盖已存在的目录
-    apktool b "${apk_base}_decoded" -c -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
+    # 【已修复】删除了报错的 -c 参数，保留 -f (强制覆盖)
+    apktool b "${apk_base}_decoded" -f -o "output_apks/${apk_base}_modified.apk" > /dev/null
     
     echo "✅ $apk_name 处理完成！"
 done
