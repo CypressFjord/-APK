@@ -26,10 +26,11 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - name: Setup Tools (erofs, apktool, payload-dumper)
+      - name: Setup Tools (erofs, apktool, payload-dumper, aria2)
         run: |
           sudo apt-get update
-          sudo apt-get install -y erofs-utils openjdk-17-jre-headless
+          sudo apt-get install -y erofs-utils openjdk-17-jre-headless aria2
+          # ... 下面的 apktool 等工具安装保持不变 ...
           
           # 部署 payload-dumper-go
           wget https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
@@ -44,11 +45,14 @@ jobs:
 
       - name: Download and Extract ROM
         run: |
-          echo "📥 Downloading ROM..."
-          wget "${{ github.event.inputs.rom_url }}" -O rom.zip
+          echo "📥 Downloading ROM with Aria2 (16 Threads)..."
+          # -x 16 表示 16 线程，-s 16 表示 16 个连接数
+          aria2c -x 16 -s 16 "${{ github.event.inputs.rom_url }}" -o rom.zip
           
           echo "📦 Unzipping payload.bin..."
           unzip rom.zip payload.bin
+          
+          # ... 下面的提取和解包逻辑保持不变 ...
           
           echo "🛠️ Dumping partitions..."
           payload-dumper-go -p system,product,system_ext payload.bin
