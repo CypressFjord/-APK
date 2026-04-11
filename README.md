@@ -1,2 +1,2 @@
-# -APK
-对部分系统APK修改
+#Build_Mod_APKs
+自动化构建修改部分HyperOS系统的系统APP
