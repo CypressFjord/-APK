@@ -201,43 +201,160 @@ for root, dirs, files in os.walk(base_dir):
 " "${apk_base}_decoded"
         echo "    [成功] ARSC 文本修改与折叠屏 Smali 破解完成！"
 
-    # ==========================================
-    # 4. MIUISystemUIPlugin 手电筒控制替换
+      # ==========================================
+    # 4. MIUISystemUIPlugin 手电筒动态注入修改
     # ==========================================
     elif [ "$apk_base" == "MIUISystemUIPlugin" ]; then
-        echo "--> 替换手电筒相关 Smali 核心文件..."
+        echo "--> 开始对 MIUISystemUIPlugin 进行全动态代码注入..."
         
-        # 1. 替换 MiFlashlightManager.smali
-        if [ -f "MiFlashlightManager.smali" ]; then
-            MANAGER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightManager.smali" 2>/dev/null | head -n 1)
-            if [ -n "$MANAGER_SMALI" ]; then
-                cp -f MiFlashlightManager.smali "$MANAGER_SMALI"
-                echo "    [成功] 完美覆盖 MiFlashlightManager.smali！"
-            else
-                echo "    [警告] 未在解包目录找到原有 Manager，强制注入新路径..."
-                mkdir -p "${apk_base}_decoded/smali/miui/systemui/flashlight/"
-                cp -f MiFlashlightManager.smali "${apk_base}_decoded/smali/miui/systemui/flashlight/"
-            fi
-        else
-            echo "    [错误] 缺失 MiFlashlightManager.smali 文件！"
+        MANAGER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightManager.smali" 2>/dev/null | head -n 1)
+        RECEIVER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightOnSystemUiReceiver.smali" 2>/dev/null | head -n 1)
+
+        if [ -z "$MANAGER_SMALI" ] || [ -z "$RECEIVER_SMALI" ]; then
+            echo "    [错误] 未找到手电筒核心 Smali 文件，解包可能不完整！"
             exit 1
         fi
 
-        # 2. 替换 MiFlashlightOnSystemUiReceiver.smali
-        if [ -f "MiFlashlightOnSystemUiReceiver.smali" ]; then
-            RECEIVER_SMALI=$(find "${apk_base}_decoded"/smali* -path "*/miui/systemui/flashlight/MiFlashlightOnSystemUiReceiver.smali" 2>/dev/null | head -n 1)
-            if [ -n "$RECEIVER_SMALI" ]; then
-                cp -f MiFlashlightOnSystemUiReceiver.smali "$RECEIVER_SMALI"
-                echo "    [成功] 完美覆盖 MiFlashlightOnSystemUiReceiver.smali！"
-            else
-                echo "    [警告] 未在解包目录找到原有 Receiver，强制注入新路径..."
-                mkdir -p "${apk_base}_decoded/smali/miui/systemui/flashlight/"
-                cp -f MiFlashlightOnSystemUiReceiver.smali "${apk_base}_decoded/smali/miui/systemui/flashlight/"
-            fi
-        else
-            echo "    [错误] 缺失 MiFlashlightOnSystemUiReceiver.smali 文件！"
-            exit 1
-        fi
+        echo "    [1/6] 正在修改 setMaxStrength 方法..."
+        awk '
+        /\.method.*setMaxStrength/ {
+            print $0
+            getline
+            print $0
+            print "    const/16 p1, 0x64"
+            next
+        }
+        { print }
+        ' "$MANAGER_SMALI" > tmp_file && mv tmp_file "$MANAGER_SMALI"
+
+        echo "    [2/6] 正在修改 setCurStrength 方法..."
+        awk '
+        /.method.*setCurStrength/ {
+            print $0
+            getline
+            print $0
+            print "    const/16 p1, 0x64"
+            next
+        }
+        { print }
+        ' "$MANAGER_SMALI" > tmp_file && mv tmp_file "$MANAGER_SMALI"
+
+        echo "    [3/6] 正在追加 operateBright 方法..."
+        cat >> "$MANAGER_SMALI" << 'EOF'
+
+.method public operateBright()V
+    .registers 7
+    invoke-virtual {p0}, Lmiui/systemui/flashlight/MiFlashlightManager;->getLogicStrength()F
+    move-result v0
+    const/16 v1, 0x82
+    int-to-float v1, v1
+    mul-float/2addr v1, v0
+    float-to-int v0, v1
+    invoke-static {v0}, Lmiui/systemui/flashlight/MiFlashlightManager;->saveStrengthToPath(I)V
+    return-void
+.end method
+EOF
+
+        echo "    [4/6] 正在追加 saveStrengthToPath 节点写入方法..."
+        cat >> "$MANAGER_SMALI" << 'EOF'
+
+.method public static saveStrengthToPath(I)V
+    .registers 5
+    const/16 v0, 0x82
+    const/16 v1, 0xd
+    move v2, v0
+    if-lez p0, :cond_a
+    if-gt p0, v1, :cond_a
+    move p0, v1
+    :cond_a
+    if-le p0, v2, :cond_d
+    move p0, v2
+    :cond_d
+    :try_start_d
+    new-instance v0, Ljava/io/FileWriter;
+    const-string v1, "/sys/class/leds/led:torch_0/brightness"
+    invoke-direct {v0, v1}, Ljava/io/FileWriter;-><init>(Ljava/lang/String;)V
+    invoke-static {p0}, Ljava/lang/String;->valueOf(I)Ljava/lang/String;
+    move-result-object v1
+    invoke-virtual {v0, v1}, Ljava/io/FileWriter;->write(Ljava/lang/String;)V
+    invoke-virtual {v0}, Ljava/io/FileWriter;->flush()V
+    invoke-virtual {v0}, Ljava/io/FileWriter;->close()V
+    new-instance v0, Ljava/lang/StringBuilder;
+    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
+    const-string v1, "Wrote strength "
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0, p0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v1, " to flashlight"
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    const-string v1, "MiFlash_MiFlashlightManager"
+    invoke-static {v1, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    :try_end_3c
+    .catch Ljava/io/IOException; {:try_start_d .. :try_end_3c} :catch_3d
+    goto :goto_45
+    :catch_3d
+    move-exception v0
+    const-string v1, "MiFlash_MiFlashlightManager"
+    const-string v2, "Failed to write to brightness nodes"
+    invoke-static {v1, v2, v0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+    :goto_45
+    return-void
+.end method
+EOF
+
+        echo "    [5/6] 正在移除 operateCamera 中的无用强度调用..."
+        awk '
+        BEGIN { in_method=0; skip=0 }
+        /\.method.*operateCamera/ { in_method=1 }
+        in_method {
+            if (skip) {
+                if (/^[[:space:]]*$/) {
+                    print
+                    skip=1
+                    next
+                }
+                skip=0
+                next
+            }
+            if (/turnOnTorchWithStrengthLevel/) {
+                skip=1
+                next
+            }
+        }
+        { print }
+        /\.end method/ && in_method { in_method=0 }
+        ' "$RECEIVER_SMALI" > tmp_file && mv tmp_file "$RECEIVER_SMALI"
+
+        echo "    [6/6] 正在拦截 setTorchMode 并注入节点写入逻辑..."
+        awk '
+        BEGIN { 
+            in_method=0
+            last_set_line=0
+        }
+        /\.method.*operateCamera/ { in_method=1 }
+        in_method && /setTorchMode/ {
+            last_set_line=NR
+        }
+        {
+            lines[NR] = $0
+        }
+        /\.end method/ && in_method { in_method=0 }
+        END {
+            for (i=1; i<=NR; i++) {
+                print lines[i]
+                if (i == last_set_line) {
+                    print "    int-to-float v2, v1"
+                    print "    const v4, 0x3fa66666  # 1.3f"
+                    print "    mul-float/2addr v2, v4"
+                    print "    float-to-int v2, v2"
+                    print "    invoke-static {v2}, Lmiui/systemui/flashlight/MiFlashlightManager;->saveStrengthToPath(I)V"
+                }
+            }
+        }
+        ' "$RECEIVER_SMALI" > tmp_file && mv tmp_file "$RECEIVER_SMALI"
+        
+        echo "    [成功] MIUISystemUIPlugin 全动态注入完美收官！"
     fi
     # ==========================================
 
